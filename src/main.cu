@@ -29,7 +29,7 @@ int main() {
     std::vector<float> h_B(N, 2.0f);
     std::vector<float> h_C(N), h_C_gpu(N);
 
-    // ---------------- CPU Timing ----------------
+    // ================= CPU Timing =================
     auto start_cpu = std::chrono::high_resolution_clock::now();
     vectorAddCPU(h_A.data(), h_B.data(), h_C.data());
     auto end_cpu = std::chrono::high_resolution_clock::now();
@@ -37,34 +37,65 @@ int main() {
     std::chrono::duration<double, std::milli> cpu_time = end_cpu - start_cpu;
     std::cout << "CPU Time: " << cpu_time.count() << " ms\n";
 
-    // ---------------- GPU Memory ----------------
+    // ================= GPU Memory =================
     float *d_A, *d_B, *d_C;
     cudaMalloc(&d_A, size);
     cudaMalloc(&d_B, size);
     cudaMalloc(&d_C, size);
 
+    // ================= H2D Timing =================
+    cudaEvent_t h2d_start, h2d_stop;
+    cudaEventCreate(&h2d_start);
+    cudaEventCreate(&h2d_stop);
+
+    cudaEventRecord(h2d_start);
+
     cudaMemcpy(d_A, h_A.data(), size, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B.data(), size, cudaMemcpyHostToDevice);
 
-    // ---------------- Kernel Launch ----------------
+    cudaEventRecord(h2d_stop);
+    cudaEventSynchronize(h2d_stop);
+
+    float h2d_time = 0;
+    cudaEventElapsedTime(&h2d_time, h2d_start, h2d_stop);
+    std::cout << "H2D Time: " << h2d_time << " ms\n";
+
+    // ================= Kernel Launch =================
     int threadsPerBlock = 256;
     int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-    auto start_gpu = std::chrono::high_resolution_clock::now();
+    cudaEvent_t k_start, k_stop;
+    cudaEventCreate(&k_start);
+    cudaEventCreate(&k_stop);
+
+    cudaEventRecord(k_start);
 
     vectorAddGPU<<<blocks, threadsPerBlock>>>(d_A, d_B, d_C);
 
-    cudaDeviceSynchronize();
+    cudaEventRecord(k_stop);
+    cudaEventSynchronize(k_stop);
 
-    auto end_gpu = std::chrono::high_resolution_clock::now();
+    float kernel_time = 0;
+    cudaEventElapsedTime(&kernel_time, k_start, k_stop);
+    std::cout << "GPU Kernel Time: " << kernel_time << " ms\n";
 
-    std::chrono::duration<double, std::milli> gpu_time = end_gpu - start_gpu;
-    std::cout << "GPU Time: " << gpu_time.count() << " ms\n";
+    // ================= D2H Timing =================
+    cudaEvent_t d2h_start, d2h_stop;
+    cudaEventCreate(&d2h_start);
+    cudaEventCreate(&d2h_stop);
 
-    // ---------------- Copy Back ----------------
+    cudaEventRecord(d2h_start);
+
     cudaMemcpy(h_C_gpu.data(), d_C, size, cudaMemcpyDeviceToHost);
 
-    // ---------------- Verify ----------------
+    cudaEventRecord(d2h_stop);
+    cudaEventSynchronize(d2h_stop);
+
+    float d2h_time = 0;
+    cudaEventElapsedTime(&d2h_time, d2h_start, d2h_stop);
+    std::cout << "D2H Time: " << d2h_time << " ms\n";
+
+    // ================= Verify =================
     for (int i = 0; i < 10; i++) {
         if (h_C[i] != h_C_gpu[i]) {
             std::cout << "Mismatch at " << i << "\n";
@@ -72,10 +103,17 @@ int main() {
         }
     }
 
-    // ---------------- Cleanup ----------------
+    // ================= Cleanup =================
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+
+    cudaEventDestroy(h2d_start);
+    cudaEventDestroy(h2d_stop);
+    cudaEventDestroy(k_start);
+    cudaEventDestroy(k_stop);
+    cudaEventDestroy(d2h_start);
+    cudaEventDestroy(d2h_stop);
 
     return 0;
 }
